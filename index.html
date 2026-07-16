@@ -1280,6 +1280,49 @@
 		/* ================= units ================= */
 		const CUP_ML = { 'US': 240, 'UK': 250, 'TW-rice-cup': 180 };
 		const UNIT_ML = { 'tsp': 5, 'tbsp': 15 };
+		/* Display-only mass estimates for volume-only recipes.
+		   These are common baking references, not source data. If a recipe gives grams,
+		   the JSON should parse the grams directly and this table is not used. */
+		const CUP_GRAMS_RULES = [
+			{ re: /cake flour|低筋|低筋麵粉/i, g: 115, label: 'cake flour' },
+			{ re: /bread flour|高筋|高筋麵粉/i, g: 127, label: 'bread flour' },
+			{ re: /all[- ]purpose flour|plain flour|中筋|中筋麵粉|麵粉|flour/i, g: 125, label: 'flour' },
+			{ re: /powdered sugar|confectioners.? sugar|icing sugar|糖粉/i, g: 120, label: 'powdered sugar' },
+			{ re: /brown sugar|黑糖|紅糖/i, g: 213, label: 'packed brown sugar' },
+			{ re: /granulated sugar|caster sugar|superfine sugar|white sugar|砂糖|細砂糖|sugar/i, g: 200, label: 'granulated sugar' },
+			{ re: /black cocoa|dutch process cocoa|cocoa powder|可可粉/i, g: 85, label: 'cocoa powder' },
+			{ re: /corn ?starch|cornflour|玉米澱粉/i, g: 120, label: 'cornstarch' },
+			{ re: /butter|奶油/i, g: 227, label: 'butter' },
+			{ re: /vegetable oil|neutral oil|canola oil|sunflower oil|oil|植物油|沙拉油|油/i, g: 218, label: 'oil' },
+			{ re: /heavy cream|whipping cream|cream|鮮奶油|淡奶油/i, g: 240, label: 'cream' },
+			{ re: /milk|water|coffee|牛奶|水|咖啡/i, g: 240, label: 'water-like liquid' },
+			{ re: /honey|蜂蜜/i, g: 340, label: 'honey' },
+			{ re: /maple syrup|楓糖/i, g: 320, label: 'maple syrup' },
+			{ re: /chocolate chips|chocolate|巧克力/i, g: 170, label: 'chocolate' }
+		];
+		const TSP_GRAMS_RULES = [
+			{ re: /baking powder|泡打粉/i, g: 4, label: 'baking powder' },
+			{ re: /baking soda|小蘇打/i, g: 4.6, label: 'baking soda' },
+			{ re: /instant yeast|active dry yeast|yeast|酵母/i, g: 3.1, label: 'yeast' },
+			{ re: /table salt|fine salt|salt|鹽/i, g: 6, label: 'fine salt' }
+		];
+		function gramEstimate(ing, amt, unit, recipe) {
+			const text = ((ing.name_original || '') + ' ' + (ing.note || '')).toLowerCase();
+			if (unit === 'cup') {
+				const cupMl = CUP_ML[recipe.cup_standard];
+				if (!cupMl) return null;
+				const rule = CUP_GRAMS_RULES.find(x => x.re.test(text));
+				if (!rule) return null;
+				return { grams: amt * rule.g * (cupMl / 240), label: rule.label };
+			}
+			if (unit === 'tbsp' || unit === 'tsp') {
+				const rule = TSP_GRAMS_RULES.find(x => x.re.test(text));
+				if (!rule) return null;
+				const tsp = unit === 'tbsp' ? amt * 3 : amt;
+				return { grams: tsp * rule.g, label: rule.label };
+			}
+			return null;
+		}
 		function fmtNum(n) {
 			if (n == null || isNaN(n)) return '';
 			if (n >= 100) return String(Math.round(n));
@@ -1305,12 +1348,16 @@
 			const u = ing.unit;
 			if (u === 'cup' || u === 'tsp' || u === 'tbsp') {
 				const nat = fmtFraction(amt) + ' ' + u;
+				const mass = gramEstimate(ing, amt, u, recipe);
+				if (metric && mass) {
+					return { main: fmtNum(mass.grams) + ' g', sub: nat + ' · est. ' + mass.label };
+				}
 				if (u === 'cup' && !CUP_ML[recipe.cup_standard]) {
 					return metric ? { main: nat, sub: 'cup standard unknown' } : { main: nat, sub: '' };
 				}
 				const per = u === 'cup' ? CUP_ML[recipe.cup_standard] : UNIT_ML[u];
 				const met = fmtNum(amt * per) + ' ml';
-				return metric ? { main: met, sub: nat } : { main: nat, sub: met };
+				return metric ? { main: met, sub: nat + ' · volume' } : { main: nat, sub: met };
 			}
 			if (u === 'g' || u === 'ml') return { main: fmtNum(amt) + ' ' + u, sub: '' };
 			if (u === 'whole') return { main: fmtNum(amt), sub: '' };
@@ -1565,10 +1612,10 @@
 			return `<section class="sec" id="ings"><h2>Ingredients ${factor !== 1 ? `<span class="scaledpill">scaled \u00D7${factor.toFixed(2)}</span>` : ''}</h2>
     <div class="seg" role="group" aria-label="Units">
       <button class="${!st.metric ? 'on' : ''}" onclick="convState['${r.id}'].metric=false;render()">Original units</button>
-      <button class="${st.metric ? 'on' : ''}" onclick="convState['${r.id}'].metric=true;render()">ml / g</button>
+      <button class="${st.metric ? 'on' : ''}" onclick="convState['${r.id}'].metric=true;render()">g / ml</button>
     </div>
     ${groups.map(g => `${g.group_name ? `<div class="grouph">${esc(g.group_name)}</div>` : ''}${rows(g)}`).join('')}
-    <p class="hint">Ingredient names keep the author's original wording.${r.cup_standard ? ` Cup standard: ${esc(r.cup_standard)} (${CUP_ML[r.cup_standard]} ml).` : ''}</p>
+    <p class="hint">Ingredient names keep the author's original wording.${r.cup_standard ? ` Cup standard: ${esc(r.cup_standard)} (${CUP_ML[r.cup_standard]} ml).` : ''} Weight estimates for cup-only ingredients use common baking densities and are marked “est.”; when the source gives grams, those source grams are used directly.</p>
   </section>`;
 		}
 		function heroSlot(r) {
@@ -1696,8 +1743,9 @@ VERBATIM CONTENT RULES
 - Do not translate, paraphrase, summarize, clean up grammar, merge separate steps, or silently correct the author.
 - JSON escaping is not paraphrasing: escape quotation marks, backslashes, and line breaks as required for valid JSON.
 - Parse explicit numbers and supported units into structured fields, while always preserving the complete source wording in amount_original or the relevant original_text field.
+- When an ingredient line gives both grams and cups/spoons, parse the grams as amount/unit because weight is more reliable for baking. Keep the complete original bilingual or mixed-unit wording in amount_original.
 - Do not average ranges. Example: for “20-25 minutes”, preserve the range in original_text and set the single numeric field to null unless the source separately states one exact value.
-- Do not calculate an unstated total time, convert temperatures, convert unsupported units, infer serving counts, or derive quantities from outside knowledge.
+- Do not calculate an unstated total time, convert temperatures, convert unsupported units, estimate grams from cups, infer serving counts, or derive quantities from outside knowledge. The app may show display-only gram estimates later; the JSON must contain only source-stated quantities.
 
 STRICT VALUE RULES
 - id: lowercase ASCII kebab-case only, matching ^[a-z0-9]+(?:-[a-z0-9]+)*$. Derive it from the recipe title or URL. No spaces, apostrophes, punctuation, or Unicode characters.
